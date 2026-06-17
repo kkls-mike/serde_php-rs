@@ -22,7 +22,7 @@
 //!   | boolean                 | `bool`                                                |
 //!   | integer                 | `i64` (automatic conversion to other types supported) |
 //!   | float                   | `f64` (automatic conversion to `f32` supported)       |
-//!   | strings                 | `Vec<u8>` (PHP strings are not UTF8)                  |
+//!   | strings                 | `String` on the `visit-str` branch; `Vec<u8>` on `master` (PHP strings are not UTF8) |
 //!   | null                    | decoded as `None`                                     |
 //!   | array (non-associative) | tuple `struct`s or `Vec<_>`                           |
 //!   | array (associative)     | regular `struct`s or `HashMap<_, _>`                  |
@@ -87,8 +87,10 @@
 //! use serde::Deserialize;
 //! use serde_php::from_bytes;
 //!
+//! // NOTE (visit-str branch): PHP strings deserialize as `String`. On `master`
+//! // these fields would be `Vec<u8>`. See FORK_NOTES.md.
 //! #[derive(Debug, Deserialize, Eq, PartialEq)]
-//! struct Data(Vec<u8>, Vec<u8>, SubData);
+//! struct Data(String, String, SubData);
 //!
 //! #[derive(Debug, Deserialize, Eq, PartialEq)]
 //! struct SubData();
@@ -96,7 +98,7 @@
 //! let input = br#"a:3:{i:0;s:4:"user";i:1;s:0:"";i:2;a:0:{}}"#;
 //! assert_eq!(
 //!     from_bytes::<Data>(input).unwrap(),
-//!     Data(b"user".to_vec(), b"".to_vec(), SubData())
+//!     Data("user".to_owned(), "".to_owned(), SubData())
 //! );
 //! ```
 //!

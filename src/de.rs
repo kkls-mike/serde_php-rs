@@ -337,8 +337,16 @@ where
 
                 let data = self.input.read_raw_string()?;
 
-                // We now have the complete bytestring, no further parsing required.
-                visitor.visit_seq(serde::de::value::SeqDeserializer::new(data.into_iter()))
+                // Fork "Fix B" (visit-str branch): surface PHP strings to serde as
+                // strings rather than byte sequences. This yields readable,
+                // value-carrying type errors (`invalid type: string "x", expected ...`)
+                // and makes the standard serde ecosystem (serde_with, etc.) work.
+                // Non-UTF-8 strings fall back to bytes to stay binary-safe.
+                // See FORK_NOTES.md for the rationale and tradeoffs.
+                match std::str::from_utf8(&data) {
+                    Ok(s) => visitor.visit_str(s),
+                    Err(_) => visitor.visit_bytes(&data),
+                }
             }
             b'a' => {
                 // Array.
@@ -658,10 +666,12 @@ mod tests {
 
     #[test]
     fn deserialize_php_string() {
+        // visit-str branch: PHP strings surface through `deserialize_any` as `String`
+        // (see FORK_NOTES.md). On `master` this same value deserializes into `Vec<u8>`.
         assert_deserializes!(
-            Vec<u8>,
+            String,
             br#"s:14:"single quote '";"#,
-            b"single quote '".to_owned()
+            "single quote '".to_owned()
         );
     }
 
@@ -679,13 +689,15 @@ mod tests {
         #[derive(Debug, Deserialize, Eq, PartialEq)]
         struct SubData();
 
+        // visit-str branch: PHP string elements surface as `String` (was `Vec<u8>`
+        // on `master`). See FORK_NOTES.md.
         #[derive(Debug, Deserialize, Eq, PartialEq)]
-        struct Data(Vec<u8>, Vec<u8>, SubData);
+        struct Data(String, String, SubData);
 
         assert_deserializes!(
             Data,
             br#"a:3:{i:0;s:4:"user";i:1;s:0:"";i:2;a:0:{}}"#,
-            Data(b"user".to_vec(), b"".to_vec(), SubData())
+            Data("user".to_owned(), "".to_owned(), SubData())
         );
     }
 
