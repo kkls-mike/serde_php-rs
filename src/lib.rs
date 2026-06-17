@@ -203,7 +203,9 @@ mod de;
 mod error;
 mod ser;
 
-pub use de::{deserialize_unordered_array, from_bytes};
+pub use de::{
+    deserialize_unordered_array, from_bytes, from_bytes_traced, PhpDeserializer, TracedError,
+};
 pub use error::{Error, Result};
 pub use ser::{to_vec, to_writer};
 

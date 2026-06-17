@@ -21,6 +21,54 @@ where
     Ok(value)
 }
 
+/// A deserialization error annotated with the path to the offending field.
+///
+/// The [`Display`](std::fmt::Display) implementation renders as
+/// ``at `<path>`: <error>`` (or just `<error>` at the document root), making it
+/// obvious *which* field of a deeply nested structure failed to parse.
+#[derive(Debug)]
+pub struct TracedError {
+    /// Dotted/indexed path to the field that failed, e.g. `invoice_details.client_id`.
+    pub path: String,
+    /// The underlying deserialization error.
+    pub source: Error,
+}
+
+impl std::fmt::Display for TracedError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        if self.path.is_empty() || self.path == "." {
+            write!(f, "{}", self.source)
+        } else {
+            write!(f, "at `{}`: {}", self.path, self.source)
+        }
+    }
+}
+
+impl std::error::Error for TracedError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+/// Deserialize from a byte slice, annotating any error with the path to the
+/// field that failed (see [`TracedError`]).
+///
+/// This is a drop-in alternative to [`from_bytes`] for cases where a useful
+/// error location matters more than a minimal dependency footprint.
+pub fn from_bytes_traced<'de, T>(s: &'de [u8]) -> std::result::Result<T, TracedError>
+where
+    T: Deserialize<'de>,
+{
+    let mut des = PhpDeserializer::new(io::BufReader::new(s));
+    serde_path_to_error::deserialize(&mut des).map_err(|err| {
+        let path = err.path().to_string();
+        TracedError {
+            path,
+            source: err.into_inner(),
+        }
+    })
+}
+
 /// Lookahead buffer with integrated lexer.
 ///
 /// Supports peeking ahead a single byte.
@@ -190,7 +238,8 @@ impl<R> PhpDeserializer<R>
 where
     R: BufRead,
 {
-    fn new(input: R) -> PhpDeserializer<R> {
+    /// Creates a new deserializer reading from the given buffered input.
+    pub fn new(input: R) -> PhpDeserializer<R> {
         PhpDeserializer {
             input: Lookahead1::new(input),
         }
@@ -306,20 +355,24 @@ where
                 // Other variants are currently not supported and would require
                 // hashmaps and variant types.
 
+                // Propagate a visitor error immediately. Otherwise the
+                // `expect(b'}')` below fails on the unconsumed input and masks
+                // the real error (e.g. an `invalid type` mismatch) with a
+                // misleading structural one.
                 let rval = match self.input.peek()? {
                     Some(b'i') | Some(b'}') => {
                         // Numeric or empty array.
-                        visitor.visit_seq(ArraySequence::new(&mut self, num_elements))
+                        visitor.visit_seq(ArraySequence::new(&mut self, num_elements))?
                     }
                     Some(b's') => {
                         // Associative array.
-                        visitor.visit_map(ArrayMapping::new(&mut self, num_elements))
+                        visitor.visit_map(ArrayMapping::new(&mut self, num_elements))?
                     }
-                    Some(c) => Err(Error::UnsupportedArrayKeyType(char::from(c))),
+                    Some(c) => return Err(Error::UnsupportedArrayKeyType(char::from(c))),
                     None => return Err(Error::UnexpectedEof),
                 };
                 self.input.expect(b'}')?;
-                rval
+                Ok(rval)
             }
             b'O' => {
                 // Object.
@@ -401,10 +454,13 @@ where
         self.input.expect(b'a')?;
         self.input.expect(b':')?;
         let num_elements = self.input.read_array_header()?;
-        let rval = visitor.visit_map(ArrayMapping::new(&mut self, num_elements));
+        // Propagate a visitor error immediately. Otherwise the `expect(b'}')`
+        // below fails on the unconsumed input and masks the real error (e.g.
+        // an `invalid type` mismatch) with a misleading structural one.
+        let rval = visitor.visit_map(ArrayMapping::new(&mut self, num_elements))?;
         self.input.expect(b'}')?;
 
-        rval
+        Ok(rval)
     }
 
     #[inline]

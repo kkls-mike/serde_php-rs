@@ -55,9 +55,9 @@ pub enum Error {
     /// sequences of unknown length requires writing these to a memory buffer
     /// with potentially unbounded space requirements and is thus disabled.
     LengthRequired,
-    /// PHP Deserialization failed: {0}
-    SerializationFailed(String),
     /// PHP Serialization failed: {0}
+    SerializationFailed(String),
+    /// PHP Deserialization failed: {0}
     DeserializationFailed(String),
 }
 
