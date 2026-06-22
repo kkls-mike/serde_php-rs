@@ -522,18 +522,10 @@ where
             return Ok(None);
         }
 
-        // Get the index; we are assuming to have a PHP array in regular
-        // "array style", that is with only numerical keys stored in order.
-        //
-        // TODO: Possibly change this behavior to handle arrays with out-of-order keys.
-        let idx = usize::deserialize(&mut *self.de)?;
-        if idx != self.index {
-            return Err(Error::IndexMismatch {
-                expected: self.index,
-                actual: idx,
-            });
-        }
-        debug_assert_eq!(idx, self.index);
+        // Read and discard the PHP numeric key. PHP arrays may have
+        // non-sequential or non-zero-based integer keys (e.g. keyed by
+        // delivery-type ID like i:1;, i:2;), so we accept any key here.
+        let _idx = usize::deserialize(&mut *self.de)?;
         self.index += 1;
 
         // We can now deserialize the actual value.
@@ -845,5 +837,32 @@ mod tests {
         expected.insert("bar".to_owned(), 2);
 
         assert_deserializes!(HashMap<String, u16>, br#"a:2:{s:3:"foo";i:1;s:3:"bar";i:2;}"#, expected);
+    }
+
+    #[test]
+    fn skip_numeric_array_with_nonzero_start() {
+        // A struct that doesn't declare a field whose PHP value is a numeric
+        // array with keys starting at 1 (e.g. keyed by delivery-type ID).
+        // serde uses IgnoredAny to skip the value; serde_php must consume it
+        // without requiring sequential zero-based indices.
+        #[derive(Debug, Deserialize, PartialEq)]
+        #[serde(default)]
+        struct Stub {
+            currency: String,
+        }
+
+        impl Default for Stub {
+            fn default() -> Self {
+                Stub { currency: String::new() }
+            }
+        }
+
+        // PHP equiv:
+        //   array("currency" => "CAD", "totals_by_delivery" => array(1 => 100.0, 2 => 200.0))
+        assert_deserializes!(
+            Stub,
+            br#"a:2:{s:8:"currency";s:3:"CAD";s:18:"totals_by_delivery";a:2:{i:1;d:100.0;i:2;d:200.0;}}"#,
+            Stub { currency: "CAD".to_owned() }
+        );
     }
 }
